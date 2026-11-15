@@ -1,0 +1,4 @@
+theme: jekyll-theme-cayman
+title: '🔮 A GitHub Action to load secrets and configuration from Grimoire.'
+description: 'Load secrets and configuration from a self-hosted Grimoire vault into your GitHub Actions workflow as masked environment variables, outputs or a dotenv file.'
+show_downloads: true

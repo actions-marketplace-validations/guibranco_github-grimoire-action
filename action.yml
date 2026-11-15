@@ -1,0 +1,73 @@
+name: "GitHub Grimoire Action"
+description: "Load secrets and configuration from a Grimoire vault into your workflow as masked environment variables and outputs."
+branding:
+  icon: "lock"
+  color: "purple"
+inputs:
+  url:
+    description: "Base URL of the Grimoire API, for example https://api.grimoire.example.com."
+    required: true
+  api-key:
+    description: "Grimoire application API key (sent as X-Api-Key). Store it as a GitHub secret."
+    required: true
+  environment:
+    description: "Grimoire environment slug to read, for example production."
+    required: true
+  secrets:
+    description: >-
+      Secrets to load, newline or comma separated. Each entry is a secret name, optionally
+      followed by =ENV_NAME to choose the variable name (for example database-password=DB_PASS).
+      Without a name, the variable is the secret name upper-cased with - and other symbols as _.
+    required: false
+    default: ""
+  configurations:
+    description: >-
+      Configuration entries to load: all (default), none, or a newline or comma separated list of keys.
+      A key ending in * matches every key that starts with it (for example Database:*). Any key may be
+      followed by =ENV_NAME. Without a name, : becomes __ (Feature:DarkMode → FEATURE__DARKMODE).
+    required: false
+    default: "all"
+  prefix:
+    description: "Prefix added to every generated variable name (not to names given with =ENV_NAME)."
+    required: false
+    default: ""
+  export-env:
+    description: "Export the values as environment variables for the following steps of the job."
+    required: false
+    default: "true"
+  set-outputs:
+    description: "Also set one step output per value, named like the variable."
+    required: false
+    default: "true"
+  env-file:
+    description: >-
+      Optional path of a dotenv file to write the values to (for example to ship with a deployment).
+      The file contains secret values in plain text: delete it before the job ends or never upload it as an artifact.
+    required: false
+    default: ""
+  mask-configurations:
+    description: "Mask configuration values in the logs as well. Secret values are always masked."
+    required: false
+    default: "false"
+  fail-on-missing:
+    description: "Fail when a requested secret or configuration key has no value in the environment."
+    required: false
+    default: "true"
+  timeout:
+    description: "Timeout of each request to Grimoire, in seconds."
+    required: false
+    default: "30"
+  retries:
+    description: "How many times a request is retried after a network error or a 5xx response."
+    required: false
+    default: "2"
+outputs:
+  loaded:
+    description: "Number of values loaded (secrets + configuration entries)."
+  variables:
+    description: "JSON array of the variable names that were loaded, without values."
+  missing:
+    description: "JSON array of requested secrets or configuration keys that had no value."
+runs:
+  using: "node24"
+  main: "src/main.js"

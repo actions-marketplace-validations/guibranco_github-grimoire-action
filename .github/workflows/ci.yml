@@ -1,0 +1,159 @@
+name: Continuous Integration
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Run the tests
+        run: node --test tests/*.test.js
+
+  test-action:
+    name: GitHub Actions Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Start a mock Grimoire API
+        run: |
+          node tests/mock-grimoire.js 8089 &
+          for _ in $(seq 1 20); do
+            curl -sf http://127.0.0.1:8089/health > /dev/null && exit 0
+            sleep 0.5
+          done
+          echo "::error::The mock Grimoire API did not start"
+          exit 1
+
+      - name: Load secrets and all configuration
+        id: all
+        uses: ./
+        with:
+          url: http://127.0.0.1:8089
+          api-key: grm_test_key
+          environment: production
+          secrets: |
+            database-password
+            smtp-password=MAIL_PASSWORD
+
+      - name: Load selected configuration only, as a dotenv file
+        id: selected
+        uses: ./
+        with:
+          url: http://127.0.0.1:8089
+          api-key: grm_test_key
+          environment: production
+          configurations: Database:*
+          prefix: APP_
+          export-env: false
+          set-outputs: false
+          env-file: .fixtures/app.env
+
+      - name: Ask for a secret that does not exist (expected to fail)
+        id: missing
+        continue-on-error: true
+        uses: ./
+        with:
+          url: http://127.0.0.1:8089
+          api-key: grm_test_key
+          environment: production
+          configurations: none
+          secrets: not-there
+
+      - name: Use a wrong API key (expected to fail)
+        id: unauthorized
+        continue-on-error: true
+        uses: ./
+        with:
+          url: http://127.0.0.1:8089
+          api-key: wrong
+          environment: production
+
+      - name: Check the results
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          failures=0
+          # expect <description> <actual> <extended regular expression>
+          expect() {
+            if [[ $2 =~ ^($3)$ ]]; then
+              echo "ok      $1"
+            else
+              echo "::error::$1 is '$2', expected '$3'"
+              failures=$((failures + 1))
+            fi
+          }
+          step() { jq -r "$1" <<< "$STEPS"; }
+
+          expect 'all.outcome' "$(step '.all.outcome')" 'success'
+          expect 'all.loaded' "$(step '.all.outputs.loaded')" '5'
+          expect 'env MAIL_PASSWORD' "$MAIL_PASSWORD" 'smtp-secret'
+          expect 'env DATABASE__HOST' "$DATABASE__HOST" 'osasco'
+          expect 'env FEATURE__DARKMODE' "$FEATURE__DARKMODE" 'true'
+          expect 'output MAIL_PASSWORD' "$(step '.all.outputs.MAIL_PASSWORD')" 'smtp-secret'
+          expect 'env DATABASE_PASSWORD has its special characters' "${#DATABASE_PASSWORD}" '22'
+
+          expect 'selected.outcome' "$(step '.selected.outcome')" 'success'
+          expect 'selected.variables' "$(step '.selected.outputs.variables')" '\["APP_DATABASE__HOST","APP_DATABASE__PORT"\]'
+          expect 'selected did not export' "${APP_DATABASE__HOST:-unset}" 'unset'
+          expect 'dotenv file' "$(cat .fixtures/app.env | tr '\n' ' ')" 'APP_DATABASE__HOST="osasco" APP_DATABASE__PORT="3306" '
+          expect 'dotenv permissions' "$(stat -c %a .fixtures/app.env)" '600'
+
+          expect 'missing.outcome' "$(step '.missing.outcome')" 'failure'
+          expect 'unauthorized.outcome' "$(step '.unauthorized.outcome')" 'failure'
+
+          rm -f .fixtures/app.env
+          exit "$((failures > 0))"
+
+  create-release:
+    name: Create release
+    needs: [unit-tests, test-action]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: '6.x'
+
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+
+      - name: Create Release (tag)
+        uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
+        with:
+          allowUpdates: false
+          skipIfReleaseExists: true
+          draft: false
+          makeLatest: true
+          tag: v${{ steps.gitversion.outputs.semVer }}
+          name: Release v${{ steps.gitversion.outputs.semVer }}
+          generateReleaseNotes: true
+          body:
+            Release ${{ steps.gitversion.outputs.semVer }} of ${{ github.event.repository.name }}
